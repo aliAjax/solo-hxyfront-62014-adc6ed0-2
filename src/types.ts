@@ -75,6 +75,11 @@ export interface PersistedState {
 export interface ImportSnapshot {
   label: string;
   at: string;
-  /** 撤销时精确移除本批新增的 id（不回滚其间的其他修改） */
-  added: { events: string[]; records: string[] };
+  /** 撤销时精确移除本批新增的 id/足环（不回滚其间的其他修改） */
+  added: {
+    events: string[];
+    records: string[];
+    /** 本批导入新进入名册的足环；撤销时若不再被其他记录/配对引用则一并移除 */
+    pigeons: string[];
+  };
 }

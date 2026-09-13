@@ -9,6 +9,7 @@ import type {
   RaceEvent,
 } from "../types";
 import { buildDemoData } from "../lib/sampleData";
+import { applyImport, rollbackImport } from "../lib/importRollback";
 import { uid } from "../lib/utils";
 
 const STORAGE_KEY = "pigeon-loft-workbench:v1";
@@ -179,32 +180,16 @@ export function StoreProvider({ children, nowISO }: { children: ReactNode; nowIS
 
   const commitImport = useCallback(
     (input: { events: RaceEvent[]; records: FlightRecord[]; label: string }) => {
-      const snapshot: ImportSnapshot = {
-        label: input.label,
-        at: nowISO,
-        added: {
-          events: input.events.map((e) => e.id),
-          records: input.records.map((r) => r.id),
-        },
-      };
+      let snapshot: ImportSnapshot | null = null;
       mutate((cur) => {
-        const known = new Set(cur.pigeons.map((p) => p.ring));
-        const extraPigeons: Pigeon[] = [];
-        for (const r of input.records) {
-          if (!known.has(r.ring)) {
-            known.add(r.ring);
-            extraPigeons.push({ ring: r.ring, bloodline: r.bloodline, sex: "未知" });
-          }
-        }
-        return {
-          ...cur,
-          events: [...cur.events, ...input.events],
-          records: [...cur.records, ...input.records],
-          pigeons: [...cur.pigeons, ...extraPigeons],
-        };
+        const applied = applyImport(cur, { ...input, at: nowISO });
+        snapshot = applied.snapshot;
+        return applied.state;
       });
-      localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot));
-      setLastImport(snapshot);
+      if (snapshot) {
+        localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot));
+        setLastImport(snapshot);
+      }
     },
     [mutate, nowISO],
   );
@@ -212,11 +197,7 @@ export function StoreProvider({ children, nowISO }: { children: ReactNode; nowIS
   const undoLastImport = useCallback(() => {
     const snap = loadSnapshot();
     if (!snap) return false;
-    mutate((cur) => ({
-      ...cur,
-      records: cur.records.filter((r) => !snap.added.records.includes(r.id)),
-      events: cur.events.filter((e) => !snap.added.events.includes(e.id)),
-    }));
+    mutate((cur) => rollbackImport(cur, snap));
     localStorage.removeItem(SNAPSHOT_KEY);
     setLastImport(null);
     return true;

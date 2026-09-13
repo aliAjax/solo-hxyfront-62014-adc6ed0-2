@@ -4,7 +4,7 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 62014",
     "typecheck": "tsc --noEmit",
-    "test": "esbuild scripts/domain.test.ts --bundle --platform=node --format=esm --outfile=dist-test/test.mjs && node dist-test/test.mjs"
+    "test": "esbuild scripts/domain.test.ts --bundle --platform=node --format=esm --outfile=dist-test/test.mjs && node dist-test/test.mjs && esbuild scripts/rollback.test.ts --bundle --platform=node --format=esm --outfile=dist-test/rollback.mjs && node dist-test/rollback.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.0",
