@@ -1,128 +1,171 @@
+import { useEffect, useState } from "react";
 import "./styles.css";
+import { StoreProvider, useStore } from "./store/StoreContext";
+import { UiProvider, useUi } from "./store/UiContext";
+import { RecordFormModal } from "./components/RecordFormModal";
+import type { RecordPrefill } from "./components/RecordFormModal";
+import { EventModal } from "./components/EventModal";
+import { DashboardView } from "./views/DashboardView";
+import { RecordsView } from "./views/RecordsView";
+import { RankingView } from "./views/RankingView";
+import { ProfileView } from "./views/ProfileView";
+import { PairsView } from "./views/PairsView";
+import { fmtDateTime } from "./lib/utils";
+import { validateRecord } from "./lib/domain";
 
-const project = {
-  "sourceNo": 9,
-  "id": "hxyfront-62014",
-  "port": 62014,
-  "title": "赛鸽训放记录",
-  "domain": "赛鸽训放",
-  "prompt": "我想做一个面向赛鸽棚的训放记录前端工具，鸽主可以记录足环号、血统、训放地点、放飞距离、天气、归巢时间、飞行速度、健康状态和配对记录。页面需要有鸽棚总览、训放成绩排行、未归巢提醒、单羽赛鸽档案和按血统筛选的历史成绩。",
-  "palette": [
-    "#1d4ed8",
-    "#64748b",
-    "#f97316"
-  ],
-  "metrics": [
-    "归巢率",
-    "平均速度",
-    "未归巢",
-    "血统档案"
-  ],
-  "filters": [
-    "短距离",
-    "中距离",
-    "长距离",
-    "种鸽"
-  ],
-  "fields": [
-    "足环号",
-    "血统",
-    "训放地点",
-    "放飞距离",
-    "归巢时间",
-    "健康状态"
-  ],
-  "records": [
-    [
-      "CHN-24-001839",
-      "詹森系",
-      "80km，晴",
-      "均速1180m/min"
-    ],
-    [
-      "CHN-24-002114",
-      "凡龙系",
-      "120km，侧风",
-      "归巢延迟"
-    ],
-    [
-      "CHN-23-008771",
-      "种鸽",
-      "配对记录更新",
-      "健康正常"
-    ]
-  ]
-};
+type Tab = "dashboard" | "records" | "ranking" | "profile" | "pairs";
 
-function App() {
+const TABS: { key: Tab; label: string }[] = [
+  { key: "dashboard", label: "鸽棚总览" },
+  { key: "records", label: "训放记录" },
+  { key: "ranking", label: "训放成绩排行" },
+  { key: "profile", label: "单羽档案" },
+  { key: "pairs", label: "配对血缘" },
+];
+
+function Toasts() {
+  const { toasts, dismiss } = useUi();
   return (
-    <main className="app">
-      <section className="hero">
-        <p>{project.id} · 源提示词{project.sourceNo} · Port {project.port}</p>
-        <h1>{project.title}</h1>
-        <span>{project.prompt}</span>
-      </section>
-
-      <section className="metrics">
-        {project.metrics.map((metric: string, index: number) => (
-          <article key={metric}>
-            <small>{metric}</small>
-            <strong>{[28, 6, 14, 91][index] ?? 10}</strong>
-          </article>
-        ))}
-      </section>
-
-      <section className="workspace">
-        <aside className="panel">
-          <h2>{project.domain}分类</h2>
-          <div className="chips">
-            {project.filters.map((item: string) => (
-              <button key={item}>{item}</button>
-            ))}
-          </div>
-        </aside>
-
-        <section className="panel form-panel">
-          <div className="heading">
-            <div>
-              <p>专业字段</p>
-              <h2>新增记录</h2>
-            </div>
-            <button className="primary">保存记录</button>
-          </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
-      </section>
-
-      <section className="panel">
-        <div className="heading">
-          <div>
-            <p>近期记录</p>
-            <h2>工作台摘要</h2>
-          </div>
-          <button>导出CSV</button>
+    <div className="toast-stack">
+      {toasts.map((t) => (
+        <div key={t.id} className={`toast toast-${t.kind}`} onClick={() => dismiss(t.id)}>
+          {t.text}
         </div>
-        <div className="records">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")}>
-              <b>{String(index + 1).padStart(2, "0")}</b>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-    </main>
+      ))}
+    </div>
   );
 }
 
-export default App;
+function Workbench() {
+  const { state, nowISO, resetDemo, clearAll } = useStore();
+  const { notify } = useUi();
+  const [tab, setTab] = useState<Tab>("dashboard");
+  const [recordPrefill, setRecordPrefill] = useState<RecordPrefill | null>(null);
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [creatingEvent, setCreatingEvent] = useState(false);
+  const [profileRing, setProfileRing] = useState<string>("");
+  const [rankingEventId, setRankingEventId] = useState<string>("");
+
+  // 全站异常计数（角标）
+  const errorCount = state.records.reduce(
+    (n, r) => n + (validateRecord(r, { state, nowISO }).some((i) => i.severity === "error") ? 1 : 0),
+    0,
+  );
+
+  const goTab = (t: string, eventId?: string, ring?: string) => {
+    setTab(t as Tab);
+    if (eventId) setRankingEventId(eventId);
+    if (ring) setProfileRing(ring);
+  };
+
+  const openRecord = (p: RecordPrefill) => setRecordPrefill(p ?? {});
+  const goProfile = (ring: string) => {
+    setProfileRing(ring);
+    setTab("profile");
+  };
+  const openEventModal = (eventId?: string) => {
+    if (eventId) setEditingEventId(eventId);
+    else setCreatingEvent(true);
+  };
+
+  const editingEvent = editingEventId ? state.events.find((e) => e.id === editingEventId) : undefined;
+
+  return (
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="brand">
+          <span className="brand-mark">🕊</span>
+          <div>
+            <h1>赛鸽训放赛务工作台</h1>
+            <small>记录 · 校验 · 排名 · 血缘</small>
+          </div>
+        </div>
+        <div className="header-right">
+          <span className="clock" title="系统时间，用于超时分级与时间校验">🕒 {fmtDateTime(nowISO)}</span>
+          <button
+            className="btn-small"
+            onClick={() => {
+              if (window.confirm("恢复为出厂演示数据？当前全部数据将被覆盖。")) {
+                resetDemo();
+                notify("已恢复演示数据", "success");
+              }
+            }}
+          >
+            演示数据
+          </button>
+          <button
+            className="btn-small btn-danger"
+            onClick={() => {
+              if (window.confirm("清空全部场次、记录与配对？此操作不可撤销。")) {
+                clearAll();
+                notify("已清空全部数据", "success");
+              }
+            }}
+          >
+            清空
+          </button>
+        </div>
+      </header>
+
+      <nav className="tab-bar">
+        {TABS.map((t) => (
+          <button key={t.key} className={`tab ${tab === t.key ? "active" : ""}`} onClick={() => setTab(t.key)}>
+            {t.label}
+            {(t.key === "ranking" || t.key === "records") && errorCount > 0 && (
+              <span className="tab-badge">{errorCount}</span>
+            )}
+          </button>
+        ))}
+      </nav>
+
+      <main className="app-main">
+        {tab === "dashboard" && <DashboardView goTab={goTab} openRecord={openRecord} goProfile={goProfile} />}
+        {tab === "records" && <RecordsView openRecord={openRecord} goProfile={goProfile} />}
+        {tab === "ranking" && (
+          <RankingView
+            eventId={rankingEventId}
+            onEventChange={setRankingEventId}
+            openRecord={openRecord}
+            goProfile={goProfile}
+            openEventModal={openEventModal}
+          />
+        )}
+        {tab === "profile" && (
+          <ProfileView
+            ring={profileRing}
+            onRingChange={setProfileRing}
+            openRecord={openRecord}
+            goPairs={() => setTab("pairs")}
+          />
+        )}
+        {tab === "pairs" && <PairsView goProfile={goProfile} />}
+      </main>
+
+      <footer className="app-footer">
+        数据保存在本浏览器 localStorage，清除浏览器数据前请先用“导出当前筛选”留档。
+      </footer>
+
+      {recordPrefill && <RecordFormModal prefill={recordPrefill} onClose={() => setRecordPrefill(null)} />}
+      {editingEvent && <EventModal event={editingEvent} onClose={() => setEditingEventId(null)} />}
+      {creatingEvent && <EventModal onClose={() => setCreatingEvent(false)} />}
+      <Toasts />
+    </div>
+  );
+}
+
+export default function App() {
+  // 每分钟刷新一次“当前时间”，驱动未归巢超时分级
+  const [nowISO, setNowISO] = useState(() => new Date().toISOString());
+  useEffect(() => {
+    const t = setInterval(() => setNowISO(new Date().toISOString()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  return (
+    <UiProvider>
+      <StoreProvider nowISO={nowISO}>
+        <Workbench />
+      </StoreProvider>
+    </UiProvider>
+  );
+}
